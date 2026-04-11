@@ -2,6 +2,7 @@ package com.axion.tempus.ui.pager
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -13,8 +14,14 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import com.axion.tempus.ui.RightPanelScreen
 import com.axion.tempus.ui.home.HomeScreen
 import com.axion.tempus.ui.notes.NotesScreen
@@ -28,13 +35,21 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
         pageCount = { 3 }
     )
     val scope = rememberCoroutineScope()
-
-    fun navigateHome() {
-        scope.launch { pagerState.animateScrollToPage(1) }
+    val focusManager = LocalFocusManager.current
+    var homeSearchQuery by remember { mutableStateOf("") }
+    val navigateHome = remember(pagerState, scope) {
+        {
+            scope.launch { pagerState.animateScrollToPage(1) }
+            Unit
+        }
     }
 
-    BackHandler(enabled = pagerState.currentPage != 1) {
-        navigateHome()
+    // Always handle back here: on home, consume the press so the activity default (and any
+    // HOME re-delivery / task transition) does not run and replay a pointless animation.
+    BackHandler {
+        if (pagerState.currentPage != 1) {
+            navigateHome()
+        }
     }
 
     LaunchedEffect(homeIntentVersion) {
@@ -43,9 +58,26 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
         }
     }
 
+    // Dismiss IME as soon as the user starts swiping away from home (target page changes).
+    LaunchedEffect(pagerState.targetPage) {
+        if (pagerState.targetPage != 1) {
+            focusManager.clearFocus()
+        }
+    }
+
+    // Clear search when leaving home so the field is empty when swiping back; also clears if
+    // the pager settles on another page while the keyboard was still up.
+    LaunchedEffect(pagerState.settledPage) {
+        if (pagerState.settledPage != 1) {
+            homeSearchQuery = ""
+            focusManager.clearFocus()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black)
             .windowInsetsPadding(
                 WindowInsets.safeDrawing.only(
                     WindowInsetsSides.Horizontal + WindowInsetsSides.Top
@@ -62,9 +94,12 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
         ) { page ->
             when (page) {
                 0 -> NotesScreen(
-                    onNavigateToHome = ::navigateHome
+                    onNavigateToHome = navigateHome
                 )
-                1 -> HomeScreen()
+                1 -> HomeScreen(
+                    searchQuery = homeSearchQuery,
+                    onSearchQueryChange = { homeSearchQuery = it }
+                )
                 else -> RightPanelScreen()
             }
         }

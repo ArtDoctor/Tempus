@@ -45,36 +45,18 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createNote() {
         viewModelScope.launch {
-            val newId = (repo.notes.value.maxOfOrNull { it.id } ?: 0L) + 1L
-            val newNote = Note(id = newId, title = "", body = "")
-            repo.updateNotes { it + newNote }
-            repo.persist()
+            saveJob?.cancel()
+            val newNote = repo.createNote()
             _currentId.value = newNote.id
         }
     }
 
     fun scheduleSave(fullText: String) {
         val id = _currentId.value ?: return
-        val nl = fullText.indexOf('\n')
-        val title = if (nl == -1) fullText else fullText.take(nl)
-        val body = if (nl == -1) "" else fullText.drop(nl + 1)
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
             delay(450)
-            repo.updateNotes { list ->
-                list.map { n ->
-                    if (n.id == id) {
-                        n.copy(
-                            title = title,
-                            body = body,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    } else {
-                        n
-                    }
-                }
-            }
-            repo.persist()
+            repo.saveNoteText(id, fullText)
         }
     }
 }

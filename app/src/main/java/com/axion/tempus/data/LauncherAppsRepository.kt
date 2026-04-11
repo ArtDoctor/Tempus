@@ -1,22 +1,27 @@
 package com.axion.tempus.data
 
+import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
 import android.util.LruCache
-import androidx.core.graphics.drawable.toBitmap
-import org.json.JSONArray
+import androidx.core.content.edit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 
 class LauncherAppsRepository private constructor(context: Context) {
 
@@ -38,9 +43,18 @@ class LauncherAppsRepository private constructor(context: Context) {
     @Volatile
     private var loaded = false
 
-    private val iconCache = object : LruCache<String, Bitmap>(96) {}
-
     private val prefsWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val searchLaunchCountsMutex = Mutex()
+    private val iconCacheSizeKb = run {
+        val activityManager = appContext.getSystemService(ActivityManager::class.java)
+        val memoryClassMb = activityManager?.memoryClass ?: 128
+        ((memoryClassMb * 1024) / 32).coerceIn(2048, 4096)
+    }
+    private val iconCache = object : LruCache<String, Bitmap>(iconCacheSizeKb) {
+        override fun sizeOf(key: String, value: Bitmap): Int {
+            return (value.allocationByteCount / 1024).coerceAtLeast(1)
+        }
+    }
 
     suspend fun ensureLoaded() = withContext(Dispatchers.IO) {
         synchronized(this@LauncherAppsRepository) {
@@ -144,9 +158,9 @@ class LauncherAppsRepository private constructor(context: Context) {
                 array.put(key)
             }
         }
-        pinnedSlotsPreferences.edit()
-            .putString(PINNED_SLOT_KEYS, array.toString())
-            .apply()
+        pinnedSlotsPreferences.edit {
+            putString(PINNED_SLOT_KEYS, array.toString())
+        }
     }
 
     private fun emptyPinnedSlots(): List<String?> = List(PINNED_SLOT_COUNT) { null }
@@ -179,34 +193,51 @@ class LauncherAppsRepository private constructor(context: Context) {
 
     fun recordSearchLaunch(app: LauncherApp) {
         val key = searchLaunchKey(app)
-        val updatedCounts = _searchLaunchCounts.value.toMutableMap()
-        val nextCount = (updatedCounts[key] ?: 0) + 1
-        updatedCounts[key] = nextCount
-
-        _searchLaunchCounts.value = updatedCounts
         prefsWriteScope.launch {
-            searchLaunchCountsPreferences.edit()
-                .putInt(key, nextCount)
-                .apply()
+            searchLaunchCountsMutex.withLock {
+                val updatedCounts = _searchLaunchCounts.value.toMutableMap()
+                val nextCount = (updatedCounts[key] ?: 0) + 1
+                updatedCounts[key] = nextCount
+                _searchLaunchCounts.value = updatedCounts
+                searchLaunchCountsPreferences.edit {
+                    putInt(key, nextCount)
+                }
+            }
         }
     }
 
     private fun loadIconBitmap(app: LauncherApp, sizePx: Int): Bitmap? {
-        val drawable = try {
-            packageManager.getActivityIcon(ComponentName(app.packageName, app.activityName))
-        } catch (_: PackageManager.NameNotFoundException) {
-            try {
-                packageManager.getApplicationIcon(app.packageName)
-            } catch (_: PackageManager.NameNotFoundException) {
-                null
-            }
-        } ?: return null
+        val drawable = resolveLauncherIconDrawable(app) ?: return null
+        return rasterizeLauncherDrawable(drawable, sizePx)
+    }
 
-        return drawable.toBitmap(sizePx, sizePx)
+    /**
+     * Renders the normal launcher icon (foreground + background for adaptive icons).
+     * We intentionally do not use the adaptive "monochrome" layer (API 33+): on real devices many apps
+     * ship layers that rasterize as unusable solid fills, and heuristics cannot reliably
+     * distinguish them from good glyphs.
+     */
+    private fun rasterizeLauncherDrawable(drawable: Drawable, sizePx: Int): Bitmap {
+        val d = drawable.mutate()
+        d.setBounds(0, 0, sizePx, sizePx)
+        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        d.draw(canvas)
+        return bitmap
+    }
+
+    private fun resolveLauncherIconDrawable(app: LauncherApp) = try {
+        packageManager.getActivityIcon(ComponentName(app.packageName, app.activityName))
+    } catch (_: PackageManager.NameNotFoundException) {
+        try {
+            packageManager.getApplicationIcon(app.packageName)
+        } catch (_: PackageManager.NameNotFoundException) {
+            null
+        }
     }
 
     private fun iconKey(app: LauncherApp, sizePx: Int): String {
-        return "${app.packageName}/${app.activityName}@$sizePx"
+        return "${app.packageName}/${app.activityName}@$sizePx-v$ICON_CACHE_VERSION"
     }
 
     private fun searchLaunchKey(app: LauncherApp): String {
@@ -223,6 +254,8 @@ class LauncherAppsRepository private constructor(context: Context) {
     }
 
     companion object {
+        /** Bump when icon loading strategy changes so stale bitmaps are not reused. */
+        private const val ICON_CACHE_VERSION = 3
         private const val SEARCH_USAGE_PREFERENCES_NAME = "search_usage_counts"
         private const val PINNED_APPS_PREFERENCES_NAME = "pinned_launcher_apps"
         private const val PINNED_SLOT_KEYS = "pinned_slot_keys"

@@ -66,11 +66,18 @@ import com.axion.tempus.data.LauncherAppsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit
+) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -79,11 +86,10 @@ fun HomeScreen() {
     val pinnedSlotKeys by repository.pinnedSlotKeys.collectAsStateWithLifecycle()
     val searchLaunchCounts by repository.searchLaunchCounts.collectAsStateWithLifecycle()
 
-    var query by remember { mutableStateOf("") }
     var searchFieldFocused by remember { mutableStateOf(false) }
     val needsClearSearchOnResume = remember { mutableStateOf(false) }
     val clearSearchAndFocus = rememberUpdatedState {
-        query = ""
+        onSearchQueryChange("")
         focusManager.clearFocus()
     }
 
@@ -107,14 +113,14 @@ fun HomeScreen() {
     }
 
     var topMatches by remember { mutableStateOf(emptyList<LauncherApp>()) }
-    LaunchedEffect(query, apps, searchLaunchCounts) {
-        val q = query
+    LaunchedEffect(searchQuery, apps, searchLaunchCounts) {
+        val q = searchQuery
         val appList = apps
         val counts = searchLaunchCounts
         val result = withContext(Dispatchers.Default) {
             topMatchingApps(q, appList, counts)
         }
-        if (q == query) {
+        if (q == searchQuery) {
             topMatches = result
         }
     }
@@ -171,19 +177,19 @@ fun HomeScreen() {
                 }
 
                 AnimatedVisibility(
-                    visible = searchFieldFocused && query.isNotBlank(),
+                    visible = searchFieldFocused && searchQuery.isNotBlank(),
                     enter = fadeIn(animationSpec = tween(120)),
                     exit = fadeOut(animationSpec = tween(90))
                 ) {
                     SearchActionRow(
-                        query = query,
-                        onClick = { launchWebSearch(context, query) }
+                        query = searchQuery,
+                        onClick = { launchWebSearch(context, searchQuery) }
                     )
                 }
 
                 OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { searchFieldFocused = it.isFocused },
@@ -194,10 +200,10 @@ fun HomeScreen() {
                         )
                     },
                     trailingIcon = {
-                        if (query.isNotEmpty()) {
+                        if (searchQuery.isNotEmpty()) {
                             IconButton(
                                 onClick = {
-                                    query = ""
+                                    onSearchQueryChange("")
                                     focusManager.clearFocus()
                                 }
                             ) {
@@ -226,7 +232,7 @@ fun HomeScreen() {
                 )
 
                 AnimatedVisibility(
-                    visible = searchFieldFocused && query.isNotBlank() && topMatches.isNotEmpty(),
+                    visible = searchFieldFocused && searchQuery.isNotBlank() && topMatches.isNotEmpty(),
                     enter = fadeIn(animationSpec = tween(120)),
                     exit = fadeOut(animationSpec = tween(90))
                 ) {
@@ -286,7 +292,7 @@ private fun HomeClock(modifier: Modifier = Modifier) {
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                delay(1000)
+                delay(millisUntilNextMinute())
                 timeText = formatTime()
                 dateText = formatDate()
             }
@@ -358,14 +364,17 @@ private fun launchWebSearch(context: Context, query: String) {
 }
 
 private fun formatTime(): String {
-    val time = LocalTime.now()
-    return String.format("%02d:%02d", time.hour, time.minute)
+    return LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
 }
 
 private fun formatDate(): String {
-    val date = LocalDate.now()
-    val month = date.month.name.take(3)
-    return "${date.dayOfMonth} $month"
+    return LocalDate.now().format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
+}
+
+private fun millisUntilNextMinute(): Long {
+    val now = ZonedDateTime.now()
+    val nextMinute = now.plusMinutes(1).withSecond(0).withNano(0)
+    return Duration.between(now, nextMinute).toMillis().coerceAtLeast(250L)
 }
 
 private fun matchScore(query: String, app: LauncherApp): Int {

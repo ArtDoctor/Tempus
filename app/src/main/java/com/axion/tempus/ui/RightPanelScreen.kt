@@ -2,6 +2,13 @@ package com.axion.tempus.ui
 
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,6 +59,11 @@ import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
 import com.axion.tempus.ui.home.LauncherAppIconItem
 
+private val PinnedSetupEnterMs = 240
+private val PinnedSetupExitMs = 180
+private val SlotCrossfadeMs = 200
+private val ListPlacementMs = 280
+
 @Composable
 fun RightPanelScreen() {
     val context = LocalContext.current
@@ -97,99 +109,125 @@ fun RightPanelScreen() {
             .background(Color.Black)
             .padding(horizontal = 24.dp, vertical = 24.dp)
     ) {
-        if (showPinnedSetup) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                Text(
-                    text = "Pinned apps",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Up to four shortcuts on the home screen. Tap a slot, then choose an app — or pick an app to fill the next empty slot.",
-                    color = Color(0xFF888888),
-                    style = MaterialTheme.typography.bodySmall,
-                    lineHeight = 18.sp
-                )
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.Top
-                ) {
-                    repeat(4) { index ->
-                        PinnedSlotCell(
-                            app = slots.getOrNull(index),
-                            isActive = activeSlotIndex == index,
-                            repository = repository,
-                            onSlotClick = { activeSlotIndex = index },
-                            onClear = {
-                                repository.clearPinnedSlot(index)
-                                if (activeSlotIndex == index) activeSlotIndex = null
-                            }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text(
-                            text = "Filter apps",
-                            color = Color(0xFF666666)
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(28.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF141414),
-                        unfocusedContainerColor = Color(0xFF141414),
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        cursorColor = Color.White,
-                        focusedPlaceholderColor = Color(0xFF666666),
-                        unfocusedPlaceholderColor = Color(0xFF666666)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showPinnedSetup,
+                modifier = Modifier.fillMaxSize(),
+                enter = fadeIn(animationSpec = tween(PinnedSetupEnterMs)) +
+                    expandVertically(
+                        expandFrom = Alignment.Top,
+                        animationSpec = tween(PinnedSetupEnterMs, easing = FastOutSlowInEasing)
+                    ),
+                exit = fadeOut(animationSpec = tween(PinnedSetupExitMs)) +
+                    shrinkVertically(
+                        shrinkTowards = Alignment.Top,
+                        animationSpec = tween(PinnedSetupExitMs, easing = FastOutSlowInEasing)
                     )
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    items(filteredApps, key = { "${it.packageName}/${it.activityName}" }) { app ->
-                        AppPickerRow(
-                            app = app,
-                            onClick = {
-                                if (activeSlotIndex != null) {
-                                    repository.setPinnedSlot(activeSlotIndex!!, app)
-                                    activeSlotIndex = null
-                                } else {
-                                    val emptyIndex = pinnedSlotKeys.indexOfFirst { it == null }
-                                    if (emptyIndex >= 0) {
-                                        repository.setPinnedSlot(emptyIndex, app)
+                    Text(
+                        text = "Pinned apps",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Up to four shortcuts on the home screen. Tap a slot, then choose an app — or pick an app to fill the next empty slot.",
+                        color = Color(0xFF888888),
+                        style = MaterialTheme.typography.bodySmall,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        repeat(4) { index ->
+                            PinnedSlotCell(
+                                app = slots.getOrNull(index),
+                                isActive = activeSlotIndex == index,
+                                repository = repository,
+                                onSlotClick = { activeSlotIndex = index },
+                                onClear = {
+                                    repository.clearPinnedSlot(index)
+                                    if (activeSlotIndex == index) activeSlotIndex = null
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(
+                                text = "Filter apps",
+                                color = Color(0xFF666666)
+                            )
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(28.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color(0xFF141414),
+                            unfocusedContainerColor = Color(0xFF141414),
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            cursorColor = Color.White,
+                            focusedPlaceholderColor = Color(0xFF666666),
+                            unfocusedPlaceholderColor = Color(0xFF666666)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(
+                            items = filteredApps,
+                            key = { "${it.packageName}/${it.activityName}" }
+                        ) { app ->
+                            AppPickerRow(
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = null,
+                                    placementSpec = tween(
+                                        durationMillis = ListPlacementMs,
+                                        easing = FastOutSlowInEasing
+                                    )
+                                ),
+                                app = app,
+                                onClick = {
+                                    if (activeSlotIndex != null) {
+                                        repository.setPinnedSlot(activeSlotIndex!!, app)
+                                        activeSlotIndex = null
+                                    } else {
+                                        val emptyIndex = pinnedSlotKeys.indexOfFirst { it == null }
+                                        if (emptyIndex >= 0) {
+                                            repository.setPinnedSlot(emptyIndex, app)
+                                        }
                                     }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
-        } else {
-            Spacer(modifier = Modifier.weight(1f))
         }
 
         Column(
@@ -241,54 +279,59 @@ private fun PinnedSlotCell(
     Box(
         modifier = Modifier.padding(horizontal = 2.dp)
     ) {
-        if (app == null) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .size(width = 84.dp, height = 108.dp)
-                    .border(
-                        width = 1.dp,
-                        color = borderColor,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .clickable(onClick = onSlotClick)
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = "Add pin",
-                    tint = Color(0xFF888888),
-                    modifier = Modifier.size(28.dp)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Empty",
-                    color = Color(0xFF666666),
-                    fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2
-                )
-            }
-        } else {
-            Box {
-                LauncherAppIconItem(
-                    app = app,
-                    repository = repository,
-                    onClick = onSlotClick
-                )
-                IconButton(
-                    onClick = onClear,
+        Crossfade(
+            targetState = app,
+            animationSpec = tween(SlotCrossfadeMs, easing = FastOutSlowInEasing),
+            label = "pinnedSlot"
+        ) { slotApp ->
+            when (slotApp) {
+                null -> Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .size(28.dp)
+                        .size(width = 84.dp, height = 108.dp)
+                        .border(
+                            width = 1.dp,
+                            color = borderColor,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .clickable(onClick = onSlotClick)
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Remove pin",
-                        tint = Color(0xFFAAAAAA),
-                        modifier = Modifier.size(18.dp)
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Add pin",
+                        tint = Color(0xFF888888),
+                        modifier = Modifier.size(28.dp)
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Empty",
+                        color = Color(0xFF666666),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2
+                    )
+                }
+                else -> Box {
+                    LauncherAppIconItem(
+                        app = slotApp,
+                        repository = repository,
+                        onClick = onSlotClick
+                    )
+                    IconButton(
+                        onClick = onClear,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove pin",
+                            tint = Color(0xFFAAAAAA),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
@@ -297,11 +340,12 @@ private fun PinnedSlotCell(
 
 @Composable
 private fun AppPickerRow(
+    modifier: Modifier = Modifier,
     app: LauncherApp,
     onClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp, horizontal = 8.dp),
