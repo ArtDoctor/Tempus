@@ -9,10 +9,13 @@ import android.graphics.Bitmap
 import android.util.LruCache
 import androidx.core.graphics.drawable.toBitmap
 import org.json.JSONArray
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class LauncherAppsRepository private constructor(context: Context) {
@@ -36,6 +39,8 @@ class LauncherAppsRepository private constructor(context: Context) {
     private var loaded = false
 
     private val iconCache = object : LruCache<String, Bitmap>(96) {}
+
+    private val prefsWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun ensureLoaded() = withContext(Dispatchers.IO) {
         synchronized(this@LauncherAppsRepository) {
@@ -179,9 +184,11 @@ class LauncherAppsRepository private constructor(context: Context) {
         updatedCounts[key] = nextCount
 
         _searchLaunchCounts.value = updatedCounts
-        searchLaunchCountsPreferences.edit()
-            .putInt(key, nextCount)
-            .apply()
+        prefsWriteScope.launch {
+            searchLaunchCountsPreferences.edit()
+                .putInt(key, nextCount)
+                .apply()
+        }
     }
 
     private fun loadIconBitmap(app: LauncherApp, sizePx: Int): Bitmap? {

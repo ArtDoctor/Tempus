@@ -1,4 +1,4 @@
-# Tempus
+# TempusOS
 
 Android launcher-style home experience with a clock, app search, quick notes, and a shortcuts panel. Built with **Jetpack Compose** and **Material 3**.
 

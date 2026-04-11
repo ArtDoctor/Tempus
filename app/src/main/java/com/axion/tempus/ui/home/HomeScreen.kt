@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -62,7 +63,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -103,8 +106,17 @@ fun HomeScreen() {
         repository.ensureLoaded()
     }
 
-    val topMatches = remember(query, apps, searchLaunchCounts) {
-        topMatchingApps(query, apps, searchLaunchCounts)
+    var topMatches by remember { mutableStateOf(emptyList<LauncherApp>()) }
+    LaunchedEffect(query, apps, searchLaunchCounts) {
+        val q = query
+        val appList = apps
+        val counts = searchLaunchCounts
+        val result = withContext(Dispatchers.Default) {
+            topMatchingApps(q, appList, counts)
+        }
+        if (q == query) {
+            topMatches = result
+        }
     }
 
     Box(
@@ -269,12 +281,15 @@ private fun SearchActionRow(
 private fun HomeClock(modifier: Modifier = Modifier) {
     var timeText by remember { mutableStateOf(formatTime()) }
     var dateText by remember { mutableStateOf(formatDate()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(1000)
-            timeText = formatTime()
-            dateText = formatDate()
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(1000)
+                timeText = formatTime()
+                dateText = formatDate()
+            }
         }
     }
 

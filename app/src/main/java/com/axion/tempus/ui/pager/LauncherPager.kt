@@ -54,6 +54,8 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
     ) {
         HorizontalPager(
             state = pagerState,
+            // Only compose the visible page so off-screen tabs (notes, settings) do not run timers, VM, or collectors.
+            beyondViewportPageCount = 0,
             // Notes page uses edge swipes + full-screen text fields; pager scroll would fight typing.
             userScrollEnabled = pagerState.currentPage != 0,
             modifier = Modifier.fillMaxSize()

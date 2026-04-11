@@ -36,6 +36,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -65,10 +67,17 @@ fun RightPanelScreen() {
         repository.resolvedPinnedSlots()
     }
 
-    val filteredApps = remember(query, apps) {
+    var filteredApps by remember { mutableStateOf(emptyList<LauncherApp>()) }
+    LaunchedEffect(query, apps) {
         val q = query.trim().lowercase()
-        if (q.isEmpty()) apps
-        else apps.filter { it.searchLabel.contains(q) }
+        val appList = apps
+        val result = withContext(Dispatchers.Default) {
+            if (q.isEmpty()) appList
+            else appList.filter { it.searchLabel.contains(q) }
+        }
+        if (q == query.trim().lowercase()) {
+            filteredApps = result
+        }
     }
 
     LaunchedEffect(repository) {

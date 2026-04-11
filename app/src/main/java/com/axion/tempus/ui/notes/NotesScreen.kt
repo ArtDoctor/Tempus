@@ -123,11 +123,7 @@ fun NotesScreen(
                     .padding(horizontal = 16.dp)
             ) {
                 BasicTextField(
-                    value = TextFieldValue(
-                        annotatedString = annotateNoteContent(textFieldValue.text),
-                        selection = textFieldValue.selection,
-                        composition = textFieldValue.composition
-                    ),
+                    value = textFieldValue,
                     onValueChange = { new ->
                         textFieldValue = TextFieldValue(
                             annotatedString = annotateNoteContent(new.text),
