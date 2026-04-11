@@ -10,6 +10,14 @@ Android launcher-style home experience with a clock, app search, quick notes, an
 
 Navigation uses a three-page **horizontal pager**: Notes (left) → Home (center, default) → Panel (right). From Notes, swipe **inward from the right edge** to return to Home. The system back gesture/button from the Notes page also returns to Home.
 
+## Screenshots
+
+![Tempus screenshot 1](docs/images/photo_2026-04-11_12-56-26.jpg)
+
+![Tempus screenshot 2](docs/images/photo_2026-04-11_12-56-28.jpg)
+
+![Tempus screenshot 3](docs/images/photo_2026-04-11_12-57-31.jpg)
+
 ## Requirements
 
 - **Android Studio** with a recent AGP (see `gradle/libs.versions.toml`; the project uses AGP 9.x).
