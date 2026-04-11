@@ -6,15 +6,16 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
@@ -25,8 +26,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -39,6 +38,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,13 +68,15 @@ fun NotesScreen(
     val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
     val currentNote by viewModel.currentNote.collectAsStateWithLifecycle()
 
-    var titleText by remember { mutableStateOf("") }
-    var bodyText by remember { mutableStateOf("") }
+    var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
 
     LaunchedEffect(currentNote?.id) {
         val n = currentNote ?: return@LaunchedEffect
-        titleText = n.title
-        bodyText = n.body
+        val combined = noteToCombinedText(n)
+        textFieldValue = TextFieldValue(
+            annotatedString = annotateNoteContent(combined),
+            selection = TextRange(combined.length)
+        )
     }
 
     ModalNavigationDrawer(
@@ -108,58 +117,41 @@ fun NotesScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .navigationBarsPadding()
+                    .imePadding()
                     .padding(top = 56.dp)
                     .padding(horizontal = 16.dp)
             ) {
-                OutlinedTextField(
-                    value = titleText,
-                    onValueChange = {
-                        titleText = it
-                        viewModel.scheduleSave(it, bodyText)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text("Title", color = Color(0xFF666666))
-                    },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        cursorColor = Color.White,
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent
+                BasicTextField(
+                    value = TextFieldValue(
+                        annotatedString = annotateNoteContent(textFieldValue.text),
+                        selection = textFieldValue.selection,
+                        composition = textFieldValue.composition
                     ),
-                    textStyle = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = bodyText,
-                    onValueChange = {
-                        bodyText = it
-                        viewModel.scheduleSave(titleText, it)
+                    onValueChange = { new ->
+                        textFieldValue = TextFieldValue(
+                            annotatedString = annotateNoteContent(new.text),
+                            selection = new.selection,
+                            composition = new.composition
+                        )
+                        viewModel.scheduleSave(new.text)
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    placeholder = {
-                        Text("Note", color = Color(0xFF666666))
-                    },
-                    minLines = 12,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color(0xFFE0E0E0),
-                        unfocusedTextColor = Color(0xFFE0E0E0),
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        cursorColor = Color.White,
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent
-                    ),
+                    cursorBrush = SolidColor(Color.White),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = 17.sp,
-                        lineHeight = 26.sp
-                    )
+                        color = Color.White
+                    ),
+                    decorationBox = { inner ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            if (textFieldValue.text.isEmpty()) {
+                                Text("Note", color = Color(0xFF666666), fontSize = 22.sp)
+                            }
+                            inner()
+                        }
+                    }
                 )
             }
 
@@ -207,6 +199,8 @@ fun NotesScreen(
                 onClick = { viewModel.createNote() },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .imePadding()
                     .padding(20.dp),
                 containerColor = Color(0xFF2A2A2A),
                 contentColor = Color.White
@@ -226,6 +220,34 @@ fun NotesScreen(
                 )
             }
             }
+        }
+    }
+}
+
+private fun noteToCombinedText(n: Note): String = buildString {
+    append(n.title)
+    if (n.title.isNotEmpty() && n.body.isNotEmpty()) append('\n')
+    append(n.body)
+}
+
+private fun annotateNoteContent(plain: String) = buildAnnotatedString {
+    val titleStyle = SpanStyle(
+        color = Color.White,
+        fontSize = 22.sp,
+        fontWeight = FontWeight.Bold
+    )
+    val bodyStyle = SpanStyle(
+        color = Color(0xFFE0E0E0),
+        fontSize = 17.sp,
+        fontWeight = FontWeight.Normal
+    )
+    val nl = plain.indexOf('\n')
+    if (nl == -1) {
+        withStyle(titleStyle) { append(plain) }
+    } else {
+        withStyle(titleStyle) { append(plain.substring(0, nl)) }
+        withStyle(ParagraphStyle(lineHeight = 26.sp)) {
+            withStyle(bodyStyle) { append(plain.substring(nl)) }
         }
     }
 }

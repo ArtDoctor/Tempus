@@ -53,8 +53,11 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun scheduleSave(title: String, body: String) {
+    fun scheduleSave(fullText: String) {
         val id = _currentId.value ?: return
+        val nl = fullText.indexOf('\n')
+        val title = if (nl == -1) fullText else fullText.take(nl)
+        val body = if (nl == -1) "" else fullText.drop(nl + 1)
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
             delay(450)

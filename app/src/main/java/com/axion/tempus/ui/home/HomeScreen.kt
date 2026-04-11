@@ -1,0 +1,398 @@
+package com.axion.tempus.ui.home
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.app.SearchManager
+import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.axion.tempus.data.LauncherApp
+import com.axion.tempus.data.LauncherAppsRepository
+import kotlinx.coroutines.delay
+import java.time.LocalDate
+import java.time.LocalTime
+
+@Composable
+fun HomeScreen() {
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val repository = remember(context) { LauncherAppsRepository.get(context) }
+    val apps by repository.apps.collectAsStateWithLifecycle()
+    val pinnedSlotKeys by repository.pinnedSlotKeys.collectAsStateWithLifecycle()
+    val searchLaunchCounts by repository.searchLaunchCounts.collectAsStateWithLifecycle()
+
+    var query by remember { mutableStateOf("") }
+    var searchFieldFocused by remember { mutableStateOf(false) }
+    val needsClearSearchOnResume = remember { mutableStateOf(false) }
+    val clearSearchAndFocus = rememberUpdatedState {
+        query = ""
+        focusManager.clearFocus()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && needsClearSearchOnResume.value) {
+                clearSearchAndFocus.value()
+                needsClearSearchOnResume.value = false
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val pinnedApps = remember(pinnedSlotKeys, apps) {
+        repository.resolvedPinnedApps()
+    }
+
+    LaunchedEffect(repository) {
+        repository.ensureLoaded()
+    }
+
+    val topMatches = remember(query, apps, searchLaunchCounts) {
+        topMatchingApps(query, apps, searchLaunchCounts)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(focusManager) {
+                detectTapGestures(onTap = {
+                    focusManager.clearFocus()
+                })
+            }
+    ) {
+        HomeClock(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(top = 32.dp)
+                .padding(horizontal = 24.dp)
+        )
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                AnimatedVisibility(
+                    visible = pinnedApps.isNotEmpty() && !searchFieldFocused,
+                    enter = fadeIn(animationSpec = tween(120)),
+                    exit = fadeOut(animationSpec = tween(90))
+                ) {
+                    Column {
+                        LauncherAppIconRow(
+                            apps = pinnedApps,
+                            repository = repository,
+                            onAppClick = { app ->
+                                repository.recordSearchLaunch(app)
+                                launchApp(context, app)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = searchFieldFocused && query.isNotBlank(),
+                    enter = fadeIn(animationSpec = tween(120)),
+                    exit = fadeOut(animationSpec = tween(90))
+                ) {
+                    SearchActionRow(
+                        query = query,
+                        onClick = { launchWebSearch(context, query) }
+                    )
+                }
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { searchFieldFocused = it.isFocused },
+                    placeholder = {
+                        Text(
+                            text = "Search apps",
+                            color = Color(0xFF666666)
+                        )
+                    },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    query = ""
+                                    focusManager.clearFocus()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Clear search",
+                                    tint = Color(0xFFAAAAAA)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(28.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedContainerColor = Color(0xFF141414),
+                        unfocusedContainerColor = Color(0xFF141414),
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        cursorColor = Color.White,
+                        focusedPlaceholderColor = Color(0xFF666666),
+                        unfocusedPlaceholderColor = Color(0xFF666666)
+                    )
+                )
+
+                AnimatedVisibility(
+                    visible = searchFieldFocused && query.isNotBlank() && topMatches.isNotEmpty(),
+                    enter = fadeIn(animationSpec = tween(120)),
+                    exit = fadeOut(animationSpec = tween(90))
+                ) {
+                    LauncherAppIconRow(
+                        apps = topMatches,
+                        repository = repository,
+                        onAppClick = { app ->
+                            repository.recordSearchLaunch(app)
+                            needsClearSearchOnResume.value = true
+                            clearSearchAndFocus.value()
+                            launchApp(context, app)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchActionRow(
+    query: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(bottom = 10.dp),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Search,
+            contentDescription = "Search the web",
+            tint = Color(0xFFCCCCCC),
+            modifier = Modifier.padding(end = 10.dp)
+        )
+        Text(
+            text = query,
+            color = Color(0xFFCCCCCC),
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textDecoration = TextDecoration.Underline
+        )
+    }
+}
+
+@Composable
+private fun HomeClock(modifier: Modifier = Modifier) {
+    var timeText by remember { mutableStateOf(formatTime()) }
+    var dateText by remember { mutableStateOf(formatDate()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            timeText = formatTime()
+            dateText = formatDate()
+        }
+    }
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = timeText,
+            color = Color.White,
+            fontSize = 64.sp,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.displayLarge.copy(
+                fontSize = 64.sp,
+                lineHeight = 72.sp
+            )
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = dateText,
+            color = Color(0xFFB0B0B0),
+            fontSize = 18.sp,
+            letterSpacing = 2.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+private fun launchApp(context: Context, app: LauncherApp) {
+    val intent = Intent(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_LAUNCHER)
+        component = ComponentName(app.packageName, app.activityName)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    runCatching {
+        context.startActivity(intent)
+    }.getOrElse {
+        context.packageManager.getLaunchIntentForPackage(app.packageName)?.let(context::startActivity)
+    }
+}
+
+private fun launchWebSearch(context: Context, query: String) {
+    val trimmedQuery = query.trim()
+    if (trimmedQuery.isEmpty()) return
+
+    val webSearchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+        putExtra(SearchManager.QUERY, trimmedQuery)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    val fallbackIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("https://www.google.com/search?q=${Uri.encode(trimmedQuery)}")
+    ).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    runCatching {
+        context.startActivity(webSearchIntent)
+    }.getOrElse {
+        runCatching {
+            context.startActivity(fallbackIntent)
+        }
+    }
+}
+
+private fun formatTime(): String {
+    val time = LocalTime.now()
+    return String.format("%02d:%02d", time.hour, time.minute)
+}
+
+private fun formatDate(): String {
+    val date = LocalDate.now()
+    val month = date.month.name.take(3)
+    return "${date.dayOfMonth} $month"
+}
+
+private fun matchScore(query: String, app: LauncherApp): Int {
+    val trimmedQuery = query.trim().lowercase()
+    if (trimmedQuery.isEmpty()) return Int.MAX_VALUE
+
+    return when {
+        app.searchLabel.startsWith(trimmedQuery) -> {
+            trimmedQuery.length * -100 - (1000 - minOf(app.searchLabel.length, 100))
+        }
+
+        app.searchLabel.contains(trimmedQuery) -> {
+            10_000 + app.searchLabel.indexOf(trimmedQuery) * 10 + app.searchLabel.length
+        }
+
+        else -> Int.MAX_VALUE
+    }
+}
+
+private fun topMatchingApps(
+    query: String,
+    apps: List<LauncherApp>,
+    searchLaunchCounts: Map<String, Int>
+): List<LauncherApp> {
+    val trimmedQuery = query.trim()
+    if (trimmedQuery.isEmpty()) return emptyList()
+
+    return apps.asSequence()
+        .mapNotNull { app ->
+            val score = matchScore(trimmedQuery, app)
+            if (score == Int.MAX_VALUE) null else app to score
+        }
+        .sortedWith(
+            compareBy<Pair<LauncherApp, Int>> { it.second }
+                .thenByDescending { (app, _) -> searchLaunchCounts[searchLaunchKey(app)] ?: 0 }
+                .thenBy { it.first.searchLabel }
+        )
+        .take(4)
+        .map { it.first }
+        .toList()
+}
+
+private fun searchLaunchKey(app: LauncherApp): String {
+    return "${app.packageName}/${app.activityName}"
+}
