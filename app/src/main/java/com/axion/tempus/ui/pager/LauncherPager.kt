@@ -54,7 +54,7 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
 
     LaunchedEffect(homeIntentVersion) {
         if (homeIntentVersion > 0 && pagerState.currentPage != 1) {
-            pagerState.animateScrollToPage(1)
+            pagerState.scrollToPage(1)
         }
     }
 

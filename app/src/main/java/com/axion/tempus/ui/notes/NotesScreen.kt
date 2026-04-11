@@ -3,6 +3,9 @@ package com.axion.tempus.ui.notes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -16,7 +19,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -25,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,14 +52,19 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,9 +74,13 @@ import com.axion.tempus.data.Note
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/** ~1.4× prior 17sp body size */
+/** Drawer list preview line (title snippet). */
 private val NotesBodySp = 24.sp
 private val NotesBodyLineHeight = 32.sp
+/** Main note body text in the editor (below the title line). */
+private val NotesEditorBodySp = 22.sp
+private val NotesEditorBodyLineHeight = 29.sp
+private val NotesHorizontalPadding = 28.dp
 private val NotesTitleSp = 28.sp
 private val NotesTitleLineHeight = 36.sp
 
@@ -78,11 +94,14 @@ fun NotesScreen(
     val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
     val currentNote by viewModel.currentNote.collectAsStateWithLifecycle()
     val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val clipboard = LocalClipboardManager.current
     val latestNavigateToHome by rememberUpdatedState(onNavigateToHome)
 
     var textFieldValue by remember { mutableStateOf(TextFieldValue()) }
     var editorFocused by remember { mutableStateOf(false) }
+    var showDeleteAllDialog by remember { mutableStateOf(false) }
 
     val titleStyle = MaterialTheme.typography.titleLarge.copy(
         fontSize = NotesTitleSp,
@@ -91,8 +110,8 @@ fun NotesScreen(
         color = Color.White
     )
     val bodyStyle = MaterialTheme.typography.bodyLarge.copy(
-        fontSize = NotesBodySp,
-        lineHeight = NotesBodyLineHeight,
+        fontSize = NotesEditorBodySp,
+        lineHeight = NotesEditorBodyLineHeight,
         color = Color.White
     )
     val titleSpan = titleStyle.toSpanStyle()
@@ -111,6 +130,45 @@ fun NotesScreen(
     val placeholderAnnotated = remember(titleSpan) {
         notesPlaceholderAnnotated(titleSpan)
     }
+    val paragraphVisualTransformation = remember(titleSpan, bodySpan) {
+        VisualTransformation { text ->
+            val plain = text.text
+            val expanded = buildString(plain.length * 2) {
+                plain.forEach { c ->
+                    append(c)
+                    if (c == '\n') append('\n')
+                }
+            }
+            TransformedText(
+                text = notesAnnotatedString(expanded, titleSpan, bodySpan),
+                offsetMapping = newlinePairOffsetMapping(plain)
+            )
+        }
+    }
+
+    if (showDeleteAllDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAllDialog = false },
+            title = { Text("Delete notes") },
+            text = { Text("Are you sure you want to delete your notes?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteAllDialog = false
+                        viewModel.deleteAllNotes()
+                        scope.launch { drawerState.close() }
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -118,26 +176,44 @@ fun NotesScreen(
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = Color(0xFF121212),
-                modifier = Modifier.fillMaxWidth(0.76f)
+                modifier = Modifier
+                    .fillMaxWidth(0.76f)
+                    .fillMaxHeight()
             ) {
-                Text(
-                    text = "Notes",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = NotesTitleSp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    modifier = Modifier.padding(24.dp)
-                )
-                LazyColumn {
-                    items(allNotes, key = { it.id }) { note ->
-                        NoteListRow(
-                            note = note,
-                            onClick = {
-                                viewModel.selectNote(note.id)
-                                scope.launch { drawerState.close() }
-                            }
-                        )
+                Column(Modifier.fillMaxSize()) {
+                    Text(
+                        text = "Notes",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = NotesTitleSp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        modifier = Modifier.padding(24.dp)
+                    )
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(allNotes, key = { it.id }) { note ->
+                            NoteListRow(
+                                note = note,
+                                onClick = {
+                                    viewModel.selectNote(note.id)
+                                    scope.launch { drawerState.close() }
+                                }
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconButton(
+                            onClick = { showDeleteAllDialog = true },
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete all notes",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -148,8 +224,10 @@ fun NotesScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
-                    .pointerInput(Unit) {
+                    .pointerInput(focusManager, keyboardController, latestNavigateToHome) {
                         detectSwipeToHome {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
                             latestNavigateToHome()
                         }
                     }
@@ -160,7 +238,7 @@ fun NotesScreen(
                         .navigationBarsPadding()
                         .imePadding()
                         .padding(top = 56.dp)
-                        .padding(horizontal = 16.dp)
+                        .padding(horizontal = NotesHorizontalPadding)
                         .pointerInput(editorFocused) {
                             if (!editorFocused) {
                                 detectTapGestures(
@@ -174,6 +252,7 @@ fun NotesScreen(
                 ) {
                     BasicTextField(
                         value = textFieldValue,
+                        visualTransformation = paragraphVisualTransformation,
                         onValueChange = { new ->
                             val plain = new.text
                             textFieldValue = TextFieldValue(
@@ -223,6 +302,20 @@ fun NotesScreen(
                     Icon(
                         imageVector = Icons.Default.Menu,
                         contentDescription = "All notes",
+                        tint = Color.White
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(textFieldValue.text))
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = "Copy note",
                         tint = Color.White
                     )
                 }
@@ -305,6 +398,39 @@ private fun notesAnnotatedString(
     } else {
         withStyle(titleSpan) { append(plain.substring(0, nl)) }
         withStyle(bodySpan) { append(plain.substring(nl)) }
+    }
+}
+
+/**
+ * Pairs each `\n` in [plain] with an extra `\n` for display. [plain] is the stored text (one `\n`
+ * per Enter); wrapped lines have no extra gap.
+ */
+private fun newlinePairOffsetMapping(plain: String): OffsetMapping = object : OffsetMapping {
+    override fun originalToTransformed(offset: Int): Int {
+        val o = offset.coerceIn(0, plain.length)
+        return o + plain.substring(0, o).count { it == '\n' }
+    }
+
+    override fun transformedToOriginal(offset: Int): Int {
+        val maxT = originalToTransformed(plain.length)
+        val t = offset.coerceIn(0, maxT)
+        var orig = 0
+        var trans = 0
+        while (orig < plain.length && trans < t) {
+            if (plain[orig] == '\n') {
+                val nextTrans = trans + 2
+                if (nextTrans <= t) {
+                    trans = nextTrans
+                    orig++
+                } else {
+                    return (orig + 1).coerceAtMost(plain.length)
+                }
+            } else {
+                trans++
+                orig++
+            }
+        }
+        return orig.coerceIn(0, plain.length)
     }
 }
 

@@ -74,6 +74,16 @@ class NotesRepository private constructor(context: Context) {
         }
     }
 
+    suspend fun deleteAllNotes() = withContext(Dispatchers.IO) {
+        ensureLoaded()
+        writeMutex.withLock {
+            val fresh = Note(id = 1L, title = "", body = "", updatedAt = System.currentTimeMillis())
+            _notes.value = listOf(fresh)
+            nextId = 2L
+            writeFileLocked(_notes.value)
+        }
+    }
+
     suspend fun saveNoteText(id: Long, fullText: String) = withContext(Dispatchers.IO) {
         ensureLoaded()
         val newlineIndex = fullText.indexOf('\n')

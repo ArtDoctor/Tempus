@@ -51,6 +51,14 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteAllNotes() {
+        viewModelScope.launch {
+            saveJob?.cancel()
+            repo.deleteAllNotes()
+            _currentId.value = repo.notes.value.firstOrNull()?.id
+        }
+    }
+
     fun scheduleSave(fullText: String) {
         val id = _currentId.value ?: return
         saveJob?.cancel()

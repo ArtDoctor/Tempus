@@ -1,5 +1,6 @@
 package com.axion.tempus.ui.home
 
+import android.graphics.Rect
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,14 +17,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,7 +45,7 @@ private val ItemSpacing = 8.dp
 fun LauncherAppIconRow(
     apps: List<LauncherApp>,
     repository: LauncherAppsRepository,
-    onAppClick: (LauncherApp) -> Unit,
+    onAppClick: (LauncherApp, Rect?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val leftAlignedWidth = ItemWidth * apps.size + ItemSpacing * (apps.size - 1).coerceAtLeast(0)
@@ -67,7 +72,7 @@ fun LauncherAppIconRow(
             LauncherAppIconItem(
                 app = app,
                 repository = repository,
-                onClick = { onAppClick(app) }
+                onClick = { sourceBounds -> onAppClick(app, sourceBounds) }
             )
         }
     }
@@ -77,7 +82,7 @@ fun LauncherAppIconRow(
 fun LauncherAppIconItem(
     app: LauncherApp,
     repository: LauncherAppsRepository,
-    onClick: () -> Unit,
+    onClick: (Rect?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val iconPx = with(LocalDensity.current) { 56.dp.roundToPx() }
@@ -91,12 +96,22 @@ fun LauncherAppIconItem(
     ) {
         value = repository.getIcon(app, iconPx)?.asImageBitmap()
     }
+    var sourceBounds by remember(app.packageName, app.activityName) { mutableStateOf<Rect?>(null) }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
             .width(ItemWidth)
-            .clickable(onClick = onClick)
+            .onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInWindow()
+                sourceBounds = Rect(
+                    bounds.left.toInt(),
+                    bounds.top.toInt(),
+                    bounds.right.toInt(),
+                    bounds.bottom.toInt()
+                )
+            }
+            .clickable { onClick(sourceBounds) }
             .padding(horizontal = 2.dp, vertical = 4.dp)
     ) {
         if (icon != null) {

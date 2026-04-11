@@ -1,7 +1,11 @@
 package com.axion.tempus.ui
 
+import android.app.role.RoleManager
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings as AndroidSettings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -30,6 +34,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,10 +44,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,7 +62,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.axion.tempus.findActivity
 import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
 import com.axion.tempus.ui.home.LauncherAppIconItem
@@ -67,6 +79,7 @@ private val ListPlacementMs = 280
 @Composable
 fun RightPanelScreen() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val repository = remember(context) { LauncherAppsRepository.get(context) }
     val apps by repository.apps.collectAsStateWithLifecycle()
     val pinnedSlotKeys by repository.pinnedSlotKeys.collectAsStateWithLifecycle()
@@ -74,6 +87,27 @@ fun RightPanelScreen() {
     var showPinnedSetup by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var activeSlotIndex by remember { mutableStateOf<Int?>(null) }
+    var launcherStatusRefreshTick by rememberSaveable { mutableStateOf(0) }
+    val isDefaultLauncher = remember(context, launcherStatusRefreshTick) {
+        context.isDefaultLauncherApp()
+    }
+    val launcherRoleRequest = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        launcherStatusRefreshTick++
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                launcherStatusRefreshTick++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val slots = remember(pinnedSlotKeys, apps) {
         repository.resolvedPinnedSlots()
@@ -109,6 +143,42 @@ fun RightPanelScreen() {
             .background(Color.Black)
             .padding(horizontal = 24.dp, vertical = 24.dp)
     ) {
+        Button(
+            onClick = {
+                context.launchDefaultLauncherSetup(
+                    onRequestRole = { intent -> launcherRoleRequest.launch(intent) }
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF3A3A3A),
+                contentColor = Color(0xFFE8E8E8),
+                disabledContainerColor = Color(0xFF2A2A2A),
+                disabledContentColor = Color(0xFF888888)
+            )
+        ) {
+            Text(
+                text = if (isDefaultLauncher) {
+                    "Manage default launcher"
+                } else {
+                    "Make app default launcher"
+                }
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = if (isDefaultLauncher) {
+                "Tempus is currently your default Home app."
+            } else {
+                "Set Tempus as your Home app so it opens when you press Home."
+            },
+            color = Color(0xFF888888),
+            style = MaterialTheme.typography.bodySmall,
+            lineHeight = 18.sp
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -246,11 +316,12 @@ fun RightPanelScreen() {
             }
             IconButton(
                 onClick = {
-                    context.startActivity(
-                        Intent(AndroidSettings.ACTION_SETTINGS).apply {
+                    val settingsIntent = Intent(AndroidSettings.ACTION_SETTINGS).apply {
+                        if (context.findActivity() == null) {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
-                    )
+                    }
+                    context.startActivity(settingsIntent)
                 }
             ) {
                 Icon(
@@ -261,6 +332,39 @@ fun RightPanelScreen() {
             }
         }
     }
+}
+
+private fun android.content.Context.isDefaultLauncherApp(): Boolean {
+    val resolvedLauncher = packageManager.resolveActivity(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+        0
+    ) ?: return false
+    return resolvedLauncher.activityInfo?.packageName == packageName
+}
+
+private fun android.content.Context.launchDefaultLauncherSetup(
+    onRequestRole: (Intent) -> Unit
+) {
+    val activity = findActivity()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val roleManager = getSystemService(RoleManager::class.java)
+        if (
+            roleManager != null &&
+            roleManager.isRoleAvailable(RoleManager.ROLE_HOME) &&
+            !roleManager.isRoleHeld(RoleManager.ROLE_HOME) &&
+            activity != null
+        ) {
+            onRequestRole(roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME))
+            return
+        }
+    }
+
+    val settingsIntent = Intent(AndroidSettings.ACTION_HOME_SETTINGS).apply {
+        if (activity == null) {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+    startActivity(settingsIntent)
 }
 
 @Composable
@@ -317,7 +421,7 @@ private fun PinnedSlotCell(
                     LauncherAppIconItem(
                         app = slotApp,
                         repository = repository,
-                        onClick = onSlotClick
+                        onClick = { onSlotClick() }
                     )
                     IconButton(
                         onClick = onClear,

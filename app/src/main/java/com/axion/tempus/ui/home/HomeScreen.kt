@@ -4,7 +4,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.app.SearchManager
+import android.content.pm.LauncherApps
+import android.graphics.Rect
 import android.net.Uri
+import android.os.Process
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -61,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.axion.tempus.findActivity
 import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +96,10 @@ fun HomeScreen(
     val clearSearchAndFocus = rememberUpdatedState {
         onSearchQueryChange("")
         focusManager.clearFocus()
+    }
+
+    BackHandler(enabled = searchFieldFocused) {
+        clearSearchAndFocus.value()
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -166,9 +175,9 @@ fun HomeScreen(
                         LauncherAppIconRow(
                             apps = pinnedApps,
                             repository = repository,
-                            onAppClick = { app ->
+                            onAppClick = { app, sourceBounds ->
                                 repository.recordSearchLaunch(app)
-                                launchApp(context, app)
+                                launchApp(context, app, sourceBounds)
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -239,11 +248,11 @@ fun HomeScreen(
                     LauncherAppIconRow(
                         apps = topMatches,
                         repository = repository,
-                        onAppClick = { app ->
+                        onAppClick = { app, sourceBounds ->
                             repository.recordSearchLaunch(app)
                             needsClearSearchOnResume.value = true
                             clearSearchAndFocus.value()
-                            launchApp(context, app)
+                            launchApp(context, app, sourceBounds)
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -324,17 +333,41 @@ private fun HomeClock(modifier: Modifier = Modifier) {
     }
 }
 
-private fun launchApp(context: Context, app: LauncherApp) {
+private fun launchApp(context: Context, app: LauncherApp, sourceBounds: Rect? = null) {
+    val componentName = ComponentName(app.packageName, app.activityName)
+    val launcherApps = context.getSystemService(LauncherApps::class.java)
+
+    val launchedWithLauncherApps = runCatching {
+        launcherApps?.startMainActivity(
+            componentName,
+            Process.myUserHandle(),
+            sourceBounds,
+            null
+        )
+        launcherApps != null
+    }.getOrDefault(false)
+
+    if (launchedWithLauncherApps) {
+        return
+    }
+
     val intent = Intent(Intent.ACTION_MAIN).apply {
         addCategory(Intent.CATEGORY_LAUNCHER)
-        component = ComponentName(app.packageName, app.activityName)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        component = componentName
+        if (context.findActivity() == null) {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
     }
 
     runCatching {
         context.startActivity(intent)
     }.getOrElse {
-        context.packageManager.getLaunchIntentForPackage(app.packageName)?.let(context::startActivity)
+        context.packageManager.getLaunchIntentForPackage(app.packageName)?.let { fallback ->
+            if (context.findActivity() == null) {
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(fallback)
+        }
     }
 }
 
@@ -342,16 +375,18 @@ private fun launchWebSearch(context: Context, query: String) {
     val trimmedQuery = query.trim()
     if (trimmedQuery.isEmpty()) return
 
+    val newTaskFlag = if (context.findActivity() == null) Intent.FLAG_ACTIVITY_NEW_TASK else 0
+
     val webSearchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
         putExtra(SearchManager.QUERY, trimmedQuery)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(newTaskFlag)
     }
 
     val fallbackIntent = Intent(
         Intent.ACTION_VIEW,
         Uri.parse("https://www.google.com/search?q=${Uri.encode(trimmedQuery)}")
     ).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(newTaskFlag)
     }
 
     runCatching {
