@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Tempus</string>
+    <string name="notification_shade_accessibility_label">Tempus notification shade</string>
+    <string name="notification_shade_accessibility_description">Lets Tempus open the Android notification shade when you swipe down on Home.</string>
 </resources>

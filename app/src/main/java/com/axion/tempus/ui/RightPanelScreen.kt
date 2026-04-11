@@ -66,6 +66,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.axion.tempus.NotificationShadeAccessibilityService
 import com.axion.tempus.findActivity
 import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
@@ -90,6 +91,9 @@ fun RightPanelScreen() {
     var launcherStatusRefreshTick by rememberSaveable { mutableStateOf(0) }
     val isDefaultLauncher = remember(context, launcherStatusRefreshTick) {
         context.isDefaultLauncherApp()
+    }
+    val isNotificationShadeAccessEnabled = remember(launcherStatusRefreshTick) {
+        NotificationShadeAccessibilityService.isEnabled()
     }
     val launcherRoleRequest = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -172,6 +176,39 @@ fun RightPanelScreen() {
                 "Tempus is currently your default Home app."
             } else {
                 "Set Tempus as your Home app so it opens when you press Home."
+            },
+            color = Color(0xFF888888),
+            style = MaterialTheme.typography.bodySmall,
+            lineHeight = 18.sp
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = {
+                context.launchNotificationShadeAccessSetup()
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF3A3A3A),
+                contentColor = Color(0xFFE8E8E8),
+                disabledContainerColor = Color(0xFF2A2A2A),
+                disabledContentColor = Color(0xFF888888)
+            )
+        ) {
+            Text(
+                text = if (isNotificationShadeAccessEnabled) {
+                    "Manage notification shade access"
+                } else {
+                    "Enable notification shade swipe"
+                }
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = if (isNotificationShadeAccessEnabled) {
+                "Swiping down on Home can now open Android's notification shade."
+            } else {
+                "Android requires this to be turned on in Accessibility settings before Tempus can open the notification shade."
             },
             color = Color(0xFF888888),
             style = MaterialTheme.typography.bodySmall,
@@ -365,6 +402,16 @@ private fun android.content.Context.launchDefaultLauncherSetup(
         }
     }
     startActivity(settingsIntent)
+}
+
+private fun android.content.Context.launchNotificationShadeAccessSetup() {
+    val activity = findActivity()
+    val intent = Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+        if (activity == null) {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+    startActivity(intent)
 }
 
 @Composable

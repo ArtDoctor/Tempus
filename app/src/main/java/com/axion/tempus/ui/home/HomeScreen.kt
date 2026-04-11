@@ -1,19 +1,24 @@
 package com.axion.tempus.ui.home
 
+import android.app.SearchManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.app.SearchManager
+import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Process
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,8 +33,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,11 +51,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.Lifecycle
@@ -77,6 +84,8 @@ import java.time.LocalTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import com.axion.tempus.NotificationShadeAccessibilityService
+import kotlin.math.abs
 
 @Composable
 fun HomeScreen(
@@ -96,6 +105,10 @@ fun HomeScreen(
     val clearSearchAndFocus = rememberUpdatedState {
         onSearchQueryChange("")
         focusManager.clearFocus()
+    }
+    val openNotificationShade = rememberUpdatedState {
+        focusManager.clearFocus()
+        context.openNotificationShadeOrPrompt()
     }
 
     BackHandler(enabled = searchFieldFocused) {
@@ -138,6 +151,12 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .pointerInput(searchFieldFocused) {
+                detectNotificationShadeSwipe(
+                    enabled = !searchFieldFocused,
+                    onSwipeDown = openNotificationShade.value
+                )
+            }
             .pointerInput(focusManager) {
                 detectTapGestures(onTap = {
                     focusManager.clearFocus()
@@ -253,6 +272,11 @@ fun HomeScreen(
                             needsClearSearchOnResume.value = true
                             clearSearchAndFocus.value()
                             launchApp(context, app, sourceBounds)
+                        },
+                        onAppLongClick = { app ->
+                            needsClearSearchOnResume.value = true
+                            clearSearchAndFocus.value()
+                            launchAppUninstallScreen(context, app)
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -398,6 +422,39 @@ private fun launchWebSearch(context: Context, query: String) {
     }
 }
 
+private fun launchAppUninstallScreen(context: Context, app: LauncherApp) {
+    val applicationInfo = runCatching {
+        context.packageManager.getApplicationInfo(app.packageName, 0)
+    }.getOrNull()
+
+    if (applicationInfo != null && applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0) {
+        Toast.makeText(
+            context,
+            "This system app can't be uninstalled.",
+            Toast.LENGTH_SHORT
+        ).show()
+        return
+    }
+
+    val uninstallIntent = Intent(Intent.ACTION_DELETE).apply {
+        data = Uri.parse("package:${app.packageName}")
+        putExtra(Intent.EXTRA_RETURN_RESULT, true)
+        if (context.findActivity() == null) {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    runCatching {
+        context.startActivity(uninstallIntent)
+    }.getOrElse {
+        Toast.makeText(
+            context,
+            "Couldn't open the uninstall screen.",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+}
+
 private fun formatTime(): String {
     return LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
 }
@@ -454,4 +511,62 @@ private fun topMatchingApps(
 
 private fun searchLaunchKey(app: LauncherApp): String {
     return "${app.packageName}/${app.activityName}"
+}
+
+private suspend fun PointerInputScope.detectNotificationShadeSwipe(
+    enabled: Boolean,
+    onSwipeDown: () -> Unit
+) {
+    if (!enabled) return
+
+    val triggerDistance = viewConfiguration.touchSlop * 2f
+
+    awaitEachGesture {
+        val down = awaitFirstDown(pass = PointerEventPass.Initial)
+        val pointerId = down.id
+        var totalDx = 0f
+        var totalDy = 0f
+        var triggered = false
+
+        while (true) {
+            val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+
+            totalDx += change.positionChange().x
+            totalDy += change.positionChange().y
+
+            if (!triggered &&
+                totalDy > triggerDistance &&
+                totalDy > abs(totalDx) * 1.5f
+            ) {
+                triggered = true
+                change.consume()
+                onSwipeDown()
+            }
+
+            if (!change.pressed) {
+                break
+            }
+
+            if (triggered) {
+                event.changes.forEach { pointerChange ->
+                    if (pointerChange.pressed) {
+                        pointerChange.consume()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun Context.openNotificationShadeOrPrompt() {
+    if (NotificationShadeAccessibilityService.expandNotificationsPanel()) {
+        return
+    }
+
+    Toast.makeText(
+        this,
+        "Enable notification shade access from the right menu first.",
+        Toast.LENGTH_LONG
+    ).show()
 }

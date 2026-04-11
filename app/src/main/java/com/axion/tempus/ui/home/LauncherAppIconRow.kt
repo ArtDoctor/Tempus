@@ -2,7 +2,7 @@ package com.axion.tempus.ui.home
 
 import android.graphics.Rect
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,6 +46,7 @@ fun LauncherAppIconRow(
     apps: List<LauncherApp>,
     repository: LauncherAppsRepository,
     onAppClick: (LauncherApp, Rect?) -> Unit,
+    onAppLongClick: ((LauncherApp) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val leftAlignedWidth = ItemWidth * apps.size + ItemSpacing * (apps.size - 1).coerceAtLeast(0)
@@ -72,7 +73,8 @@ fun LauncherAppIconRow(
             LauncherAppIconItem(
                 app = app,
                 repository = repository,
-                onClick = { sourceBounds -> onAppClick(app, sourceBounds) }
+                onClick = { sourceBounds -> onAppClick(app, sourceBounds) },
+                onLongClick = onAppLongClick?.let { longClick -> { longClick(app) } }
             )
         }
     }
@@ -83,6 +85,7 @@ fun LauncherAppIconItem(
     app: LauncherApp,
     repository: LauncherAppsRepository,
     onClick: (Rect?) -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val iconPx = with(LocalDensity.current) { 56.dp.roundToPx() }
@@ -111,7 +114,10 @@ fun LauncherAppIconItem(
                     bounds.bottom.toInt()
                 )
             }
-            .clickable { onClick(sourceBounds) }
+            .combinedClickable(
+                onClick = { onClick(sourceBounds) },
+                onLongClick = onLongClick
+            )
             .padding(horizontal = 2.dp, vertical = 4.dp)
     ) {
         if (icon != null) {

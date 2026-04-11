@@ -38,6 +38,8 @@ Install the debug APK on a connected device or emulator:
 ./gradlew :app:installDebug
 ```
 
+Accessibility experiment note: Tempus currently includes an accessibility-based notification shade shortcut. It builds and works in the emulator, but on some real devices the debug APK can be blocked during sideload install or flagged by Play Protect because the app declares an `AccessibilityService`. We should revisit this and find a safer implementation path or a cleaner device-install workflow.
+
 Release builds:
 
 ```bash
