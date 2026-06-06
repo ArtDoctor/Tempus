@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import com.axion.tempus.data.GermanWords
 import com.axion.tempus.ui.RightPanelScreen
 import com.axion.tempus.ui.home.HomeScreen
 import com.axion.tempus.ui.notes.NotesScreen
@@ -37,6 +38,13 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     var homeSearchQuery by remember { mutableStateOf("") }
+    var germanWord by remember { mutableStateOf(GermanWords.random()) }
+    val nextGermanWord = remember {
+        {
+            germanWord = GermanWords.random(excluding = germanWord)
+            Unit
+        }
+    }
     val navigateHome = remember(pagerState, scope) {
         {
             scope.launch { pagerState.animateScrollToPage(1) }
@@ -53,8 +61,11 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
     }
 
     LaunchedEffect(homeIntentVersion) {
-        if (homeIntentVersion > 0 && pagerState.currentPage != 1) {
-            pagerState.scrollToPage(1)
+        if (homeIntentVersion > 0) {
+            germanWord = GermanWords.random(excluding = germanWord)
+            if (pagerState.currentPage != 1) {
+                pagerState.scrollToPage(1)
+            }
         }
     }
 
@@ -98,7 +109,9 @@ fun LauncherPager(homeIntentVersion: Int = 0) {
                 )
                 1 -> HomeScreen(
                     searchQuery = homeSearchQuery,
-                    onSearchQueryChange = { homeSearchQuery = it }
+                    onSearchQueryChange = { homeSearchQuery = it },
+                    germanWord = germanWord,
+                    onNextGermanWord = nextGermanWord
                 )
                 else -> RightPanelScreen()
             }

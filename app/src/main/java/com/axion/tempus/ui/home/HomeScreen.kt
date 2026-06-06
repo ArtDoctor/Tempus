@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -85,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.axion.tempus.findActivity
+import com.axion.tempus.data.GermanWord
 import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
 import kotlinx.coroutines.Dispatchers
@@ -100,7 +102,9 @@ import kotlin.math.abs
 @Composable
 fun HomeScreen(
     searchQuery: String,
-    onSearchQueryChange: (String) -> Unit
+    onSearchQueryChange: (String) -> Unit,
+    germanWord: GermanWord,
+    onNextGermanWord: () -> Unit
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -210,6 +214,15 @@ fun HomeScreen(
                 .fillMaxWidth()
                 .padding(top = 32.dp)
                 .padding(horizontal = 24.dp)
+        )
+
+        GermanWordWidget(
+            word = germanWord,
+            visible = !searchFieldFocused,
+            onNextWord = onNextGermanWord,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = 44.dp)
         )
 
         Box(
