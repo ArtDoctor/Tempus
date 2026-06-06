@@ -1,10 +1,23 @@
 package com.axion.tempus.ui.notes
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,10 +30,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
@@ -43,6 +58,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -71,6 +87,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.axion.tempus.data.Note
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -102,6 +119,17 @@ fun NotesScreen(
     var textFieldValue by remember { mutableStateOf(TextFieldValue()) }
     var editorFocused by remember { mutableStateOf(false) }
     var showDeleteAllDialog by remember { mutableStateOf(false) }
+    var copyFeedbackVisible by remember { mutableStateOf(false) }
+    val copyIconScale by animateFloatAsState(
+        targetValue = if (copyFeedbackVisible) 1.12f else 1f,
+        animationSpec = tween(durationMillis = 160),
+        label = "copyIconScale"
+    )
+    val copyButtonColor by animateColorAsState(
+        targetValue = if (copyFeedbackVisible) Color(0xFF1E3A2D) else Color.Transparent,
+        animationSpec = tween(durationMillis = 180),
+        label = "copyButtonColor"
+    )
 
     val titleStyle = MaterialTheme.typography.titleLarge.copy(
         fontSize = NotesTitleSp,
@@ -168,6 +196,13 @@ fun NotesScreen(
                 }
             }
         )
+    }
+
+    LaunchedEffect(copyFeedbackVisible) {
+        if (copyFeedbackVisible) {
+            delay(1400)
+            copyFeedbackVisible = false
+        }
     }
 
     ModalNavigationDrawer(
@@ -308,16 +343,57 @@ fun NotesScreen(
                 IconButton(
                     onClick = {
                         clipboard.setText(AnnotatedString(textFieldValue.text))
+                        copyFeedbackVisible = true
                     },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
+                        .background(copyButtonColor, RoundedCornerShape(50))
+                        .scale(copyIconScale)
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = "Copy note",
-                        tint = Color.White
-                    )
+                    Crossfade(
+                        targetState = copyFeedbackVisible,
+                        animationSpec = tween(durationMillis = 160),
+                        label = "copyIconCrossfade"
+                    ) { copied ->
+                        Icon(
+                            imageVector = if (copied) Icons.Filled.DoneAll else Icons.Filled.ContentCopy,
+                            contentDescription = if (copied) "Note copied" else "Copy note",
+                            tint = Color.White
+                        )
+                    }
+                }
+                AnimatedVisibility(
+                    visible = copyFeedbackVisible,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp),
+                    enter = fadeIn(tween(140)) +
+                        slideInVertically(tween(180)) { -it / 2 } +
+                        scaleIn(tween(180), initialScale = 0.92f),
+                    exit = fadeOut(tween(160)) +
+                        slideOutVertically(tween(180)) { -it / 3 } +
+                        scaleOut(tween(160), targetScale = 0.96f)
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(Color(0xFF1E3A2D), RoundedCornerShape(50))
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.DoneAll,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Copied",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
                 }
             }
         }

@@ -2,11 +2,36 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Required on API 30+ so implicit AlarmClock intents resolve on real devices -->
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_TIMERS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_CLOCK" />
+        </intent>
+        <!-- Explicit package fallbacks when OEM doesn’t expose SHOW_* intents -->
+        <package android:name="com.google.android.deskclock" />
+        <package android:name="com.android.deskclock" />
+        <package android:name="com.sec.android.app.clockpackage" />
+        <package android:name="com.samsung.android.app.clockpackage" />
+        <package android:name="com.oneplus.deskclock" />
+        <package android:name="com.coloros.alarmclock" />
+        <package android:name="com.oplus.alarmclock" />
+        <package android:name="com.miui.clock" />
     </queries>
 
     <application

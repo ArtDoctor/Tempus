@@ -1,14 +1,20 @@
 package com.axion.tempus.ui.home
 
 import android.app.SearchManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.LauncherApps
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.os.Process
+import android.provider.AlarmClock
+import android.provider.Settings
+import android.view.KeyEvent as AndroidKeyEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -20,22 +26,27 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +63,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -59,11 +71,11 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -76,17 +88,15 @@ import com.axion.tempus.findActivity
 import com.axion.tempus.data.LauncherApp
 import com.axion.tempus.data.LauncherAppsRepository
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
-import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import com.axion.tempus.NotificationShadeAccessibilityService
 import kotlin.math.abs
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     searchQuery: String,
@@ -101,18 +111,49 @@ fun HomeScreen(
     val searchLaunchCounts by repository.searchLaunchCounts.collectAsStateWithLifecycle()
 
     var searchFieldFocused by remember { mutableStateOf(false) }
+    var keyboardWasVisibleForSearch by remember { mutableStateOf(false) }
+    val isImeVisible = WindowInsets.isImeVisible
     val needsClearSearchOnResume = remember { mutableStateOf(false) }
     val clearSearchAndFocus = rememberUpdatedState {
         onSearchQueryChange("")
         focusManager.clearFocus()
     }
+    val timerMinutes = remember(searchQuery) { parseTimerMinutes(searchQuery) }
     val openNotificationShade = rememberUpdatedState {
         focusManager.clearFocus()
         context.openNotificationShadeOrPrompt()
     }
+    val launchWebSearchAndReset = rememberUpdatedState {
+        needsClearSearchOnResume.value = true
+        clearSearchAndFocus.value()
+        launchWebSearch(context, searchQuery)
+    }
+    val launchClockTimerAndReset = rememberUpdatedState {
+        val minutes = parseTimerMinutes(searchQuery) ?: return@rememberUpdatedState
+        needsClearSearchOnResume.value = true
+        clearSearchAndFocus.value()
+        launchClockTimer(context, minutes)
+    }
 
     BackHandler(enabled = searchFieldFocused) {
         clearSearchAndFocus.value()
+    }
+
+    LaunchedEffect(searchFieldFocused, isImeVisible) {
+        when {
+            searchFieldFocused && isImeVisible -> {
+                keyboardWasVisibleForSearch = true
+            }
+
+            searchFieldFocused && keyboardWasVisibleForSearch && !isImeVisible -> {
+                keyboardWasVisibleForSearch = false
+                clearSearchAndFocus.value()
+            }
+
+            !searchFieldFocused -> {
+                keyboardWasVisibleForSearch = false
+            }
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -198,6 +239,9 @@ fun HomeScreen(
                                 repository.recordSearchLaunch(app)
                                 launchApp(context, app, sourceBounds)
                             },
+                            onAppLongClick = { app ->
+                                launchAppSettingsScreen(context, app)
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -209,16 +253,37 @@ fun HomeScreen(
                     enter = fadeIn(animationSpec = tween(120)),
                     exit = fadeOut(animationSpec = tween(90))
                 ) {
-                    SearchActionRow(
-                        query = searchQuery,
-                        onClick = { launchWebSearch(context, searchQuery) }
-                    )
+                    Column {
+                        if (timerMinutes != null) {
+                            TimerActionRow(
+                                minutes = timerMinutes,
+                                onClick = { launchClockTimerAndReset.value() }
+                            )
+                        }
+                        SearchActionRow(
+                            query = searchQuery,
+                            onClick = { launchWebSearchAndReset.value() }
+                        )
+                    }
                 }
 
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
                     modifier = Modifier
+                        .onPreviewKeyEvent { event ->
+                            val native = event.nativeKeyEvent
+                            if (native.keyCode != AndroidKeyEvent.KEYCODE_BACK ||
+                                native.action != AndroidKeyEvent.ACTION_DOWN
+                            ) {
+                                return@onPreviewKeyEvent false
+                            }
+                            if (!searchFieldFocused && searchQuery.isEmpty()) {
+                                return@onPreviewKeyEvent false
+                            }
+                            clearSearchAndFocus.value()
+                            true
+                        }
                         .fillMaxWidth()
                         .onFocusChanged { searchFieldFocused = it.isFocused },
                     placeholder = {
@@ -246,6 +311,9 @@ fun HomeScreen(
                     singleLine = true,
                     shape = RoundedCornerShape(28.dp),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = { launchWebSearchAndReset.value() }
+                    ),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
@@ -276,13 +344,43 @@ fun HomeScreen(
                         onAppLongClick = { app ->
                             needsClearSearchOnResume.value = true
                             clearSearchAndFocus.value()
-                            launchAppUninstallScreen(context, app)
+                            launchAppSettingsScreen(context, app)
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TimerActionRow(
+    minutes: Int,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(bottom = 10.dp),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Timer,
+            contentDescription = "Start timer",
+            tint = Color(0xFFCCCCCC),
+            modifier = Modifier.padding(end = 10.dp)
+        )
+        Text(
+            text = "Start $minutes min timer",
+            color = Color(0xFFCCCCCC),
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textDecoration = TextDecoration.Underline
+        )
     }
 }
 
@@ -321,19 +419,71 @@ private fun HomeClock(modifier: Modifier = Modifier) {
     var timeText by remember { mutableStateOf(formatTime()) }
     var dateText by remember { mutableStateOf(formatDate()) }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val appContext = LocalContext.current.applicationContext
+    val context = LocalContext.current
 
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) {
-                delay(millisUntilNextMinute())
-                timeText = formatTime()
-                dateText = formatDate()
+    val applyClockNow = remember {
+        {
+            timeText = formatTime()
+            dateText = formatDate()
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, appContext) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                applyClockNow()
             }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_TICK)
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+        }
+        var registered = false
+        fun register() {
+            if (registered) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                appContext.registerReceiver(receiver, filter)
+            }
+            registered = true
+        }
+        fun unregister() {
+            if (!registered) return
+            runCatching { appContext.unregisterReceiver(receiver) }
+            registered = false
+        }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    applyClockNow()
+                    register()
+                }
+                Lifecycle.Event.ON_STOP -> unregister()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            applyClockNow()
+            register()
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            unregister()
         }
     }
 
     Column(
-        modifier = modifier,
+        modifier = modifier
+            .clickable(
+                onClickLabel = "Open Clock",
+                role = Role.Button,
+                onClick = { launchDefaultClockApp(context) }
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -395,6 +545,85 @@ private fun launchApp(context: Context, app: LauncherApp, sourceBounds: Rect? = 
     }
 }
 
+private fun launchDefaultClockApp(context: Context) {
+    val newTaskFlag = if (context.findActivity() == null) Intent.FLAG_ACTIVITY_NEW_TASK else 0
+    val pm = context.packageManager
+
+    fun Intent.withNewTask(): Intent = apply { addFlags(newTaskFlag) }
+
+    fun tryStart(i: Intent): Boolean =
+        runCatching {
+            context.startActivity(i.withNewTask())
+            true
+        }.getOrDefault(false)
+
+    if (tryStart(Intent(AlarmClock.ACTION_SHOW_ALARMS))) return
+
+    val showAlarms = Intent(AlarmClock.ACTION_SHOW_ALARMS)
+    @Suppress("DEPRECATION")
+    val alarmHandlers = pm.queryIntentActivities(showAlarms, PackageManager.MATCH_DEFAULT_ONLY)
+    val firstAlarm = alarmHandlers.firstOrNull()?.activityInfo
+    if (firstAlarm != null) {
+        val explicit = Intent(AlarmClock.ACTION_SHOW_ALARMS).apply {
+            setClassName(firstAlarm.packageName, firstAlarm.name)
+        }
+        if (tryStart(explicit)) return
+    }
+
+    if (tryStart(Intent(AlarmClock.ACTION_SHOW_TIMERS))) return
+
+    if (Build.VERSION.SDK_INT >= 35) {
+        val appClock = Intent(Intent.ACTION_MAIN).addCategory("android.intent.category.APP_CLOCK")
+        if (appClock.resolveActivity(pm) != null && tryStart(appClock)) return
+    }
+
+    for (pkg in CLOCK_LAUNCH_PACKAGES) {
+        val launch = pm.getLaunchIntentForPackage(pkg) ?: continue
+        if (tryStart(launch)) return
+    }
+
+    Toast.makeText(
+        context,
+        "Couldn't open Clock.",
+        Toast.LENGTH_SHORT
+    ).show()
+}
+
+/** Packages queried in the manifest; order is generic → OEM-specific. */
+private val CLOCK_LAUNCH_PACKAGES = listOf(
+    "com.google.android.deskclock",
+    "com.android.deskclock",
+    "com.sec.android.app.clockpackage",
+    "com.samsung.android.app.clockpackage",
+    "com.oneplus.deskclock",
+    "com.coloros.alarmclock",
+    "com.oplus.alarmclock",
+    "com.miui.clock",
+)
+
+private const val MAX_TIMER_MINUTES = Int.MAX_VALUE / 60
+
+private fun launchClockTimer(context: Context, minutes: Int) {
+    val newTaskFlag = if (context.findActivity() == null) Intent.FLAG_ACTIVITY_NEW_TASK else 0
+    val seconds = minutes * 60
+    val timerIntent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+        putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+        putExtra(AlarmClock.EXTRA_MESSAGE, "Tempus timer")
+        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        addFlags(newTaskFlag)
+    }
+
+    runCatching {
+        context.startActivity(timerIntent)
+    }.getOrElse {
+        Toast.makeText(
+            context,
+            "Couldn't start timer.",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+}
+
 private fun launchWebSearch(context: Context, query: String) {
     val trimmedQuery = query.trim()
     if (trimmedQuery.isEmpty()) return
@@ -422,34 +651,25 @@ private fun launchWebSearch(context: Context, query: String) {
     }
 }
 
-private fun launchAppUninstallScreen(context: Context, app: LauncherApp) {
-    val applicationInfo = runCatching {
-        context.packageManager.getApplicationInfo(app.packageName, 0)
-    }.getOrNull()
+private fun parseTimerMinutes(query: String): Int? {
+    val minutes = query.trim().toIntOrNull() ?: return null
+    return minutes.takeIf { it in 1..MAX_TIMER_MINUTES }
+}
 
-    if (applicationInfo != null && applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0) {
-        Toast.makeText(
-            context,
-            "This system app can't be uninstalled.",
-            Toast.LENGTH_SHORT
-        ).show()
-        return
-    }
-
-    val uninstallIntent = Intent(Intent.ACTION_DELETE).apply {
+private fun launchAppSettingsScreen(context: Context, app: LauncherApp) {
+    val settingsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
         data = Uri.parse("package:${app.packageName}")
-        putExtra(Intent.EXTRA_RETURN_RESULT, true)
         if (context.findActivity() == null) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
     }
 
     runCatching {
-        context.startActivity(uninstallIntent)
+        context.startActivity(settingsIntent)
     }.getOrElse {
         Toast.makeText(
             context,
-            "Couldn't open the uninstall screen.",
+            "Couldn't open app settings.",
             Toast.LENGTH_SHORT
         ).show()
     }
@@ -461,12 +681,6 @@ private fun formatTime(): String {
 
 private fun formatDate(): String {
     return LocalDate.now().format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
-}
-
-private fun millisUntilNextMinute(): Long {
-    val now = ZonedDateTime.now()
-    val nextMinute = now.plusMinutes(1).withSecond(0).withNano(0)
-    return Duration.between(now, nextMinute).toMillis().coerceAtLeast(250L)
 }
 
 private fun matchScore(query: String, app: LauncherApp): Int {
@@ -560,13 +774,5 @@ private suspend fun PointerInputScope.detectNotificationShadeSwipe(
 }
 
 private fun Context.openNotificationShadeOrPrompt() {
-    if (NotificationShadeAccessibilityService.expandNotificationsPanel()) {
-        return
-    }
-
-    Toast.makeText(
-        this,
-        "Enable notification shade access from the right menu first.",
-        Toast.LENGTH_LONG
-    ).show()
+    NotificationShadeAccessibilityService.expandNotificationsPanel()
 }

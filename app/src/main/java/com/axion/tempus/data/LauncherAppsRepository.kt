@@ -1,14 +1,21 @@
 package com.axion.tempus.data
 
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
 import android.util.LruCache
 import androidx.core.content.edit
 import kotlinx.coroutines.CoroutineScope
@@ -43,8 +50,45 @@ class LauncherAppsRepository private constructor(context: Context) {
     @Volatile
     private var loaded = false
 
+    private val appRefreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val prefsWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appRefreshMutex = Mutex()
     private val searchLaunchCountsMutex = Mutex()
+    private val launcherApps = appContext.getSystemService(LauncherApps::class.java)
+    private val launcherAppsCallback = object : LauncherApps.Callback() {
+        override fun onPackageAdded(packageName: String, user: UserHandle) {
+            refreshAppsIfLoaded()
+        }
+
+        override fun onPackageRemoved(packageName: String, user: UserHandle) {
+            refreshAppsIfLoaded()
+        }
+
+        override fun onPackageChanged(packageName: String, user: UserHandle) {
+            refreshAppsIfLoaded()
+        }
+
+        override fun onPackagesAvailable(
+            packageNames: Array<out String>,
+            user: UserHandle,
+            replacing: Boolean
+        ) {
+            refreshAppsIfLoaded()
+        }
+
+        override fun onPackagesUnavailable(
+            packageNames: Array<out String>,
+            user: UserHandle,
+            replacing: Boolean
+        ) {
+            refreshAppsIfLoaded()
+        }
+    }
+    private val packageChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            refreshAppsIfLoaded()
+        }
+    }
     private val iconCacheSizeKb = run {
         val activityManager = appContext.getSystemService(ActivityManager::class.java)
         val memoryClassMb = activityManager?.memoryClass ?: 128
@@ -56,31 +100,12 @@ class LauncherAppsRepository private constructor(context: Context) {
         }
     }
 
-    suspend fun ensureLoaded() = withContext(Dispatchers.IO) {
-        synchronized(this@LauncherAppsRepository) {
-            if (loaded) return@withContext
+    init {
+        registerAppChangeListeners()
+    }
 
-            val intent = Intent(Intent.ACTION_MAIN, null).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-            }
-
-            _apps.value = packageManager.queryIntentActivities(intent, 0)
-                .map { resolveInfo ->
-                    val label = resolveInfo.loadLabel(packageManager).toString()
-                    LauncherApp(
-                        packageName = resolveInfo.activityInfo.packageName,
-                        activityName = resolveInfo.activityInfo.name,
-                        label = label,
-                        searchLabel = label.lowercase()
-                    )
-                }
-                .distinctBy { app -> app.packageName to app.activityName }
-                .sortedBy { app -> app.searchLabel }
-
-            pruneInvalidPinnedSlotsLocked()
-
-            loaded = true
-        }
+    suspend fun ensureLoaded() {
+        refreshInstalledApps(force = false)
     }
 
     fun launcherAppForKey(key: String): LauncherApp? {
@@ -168,6 +193,74 @@ class LauncherAppsRepository private constructor(context: Context) {
     private fun normalizedPinnedSlots(): MutableList<String?> {
         val current = _pinnedSlotKeys.value
         return MutableList(PINNED_SLOT_COUNT) { i -> current.getOrNull(i) }
+    }
+
+    private suspend fun refreshInstalledApps(force: Boolean) = withContext(Dispatchers.IO) {
+        appRefreshMutex.withLock {
+            if (loaded && !force) return@withLock
+
+            _apps.value = loadLauncherApps()
+            if (force) {
+                synchronized(iconCache) {
+                    iconCache.evictAll()
+                }
+            }
+            pruneInvalidPinnedSlotsLocked()
+            loaded = true
+        }
+    }
+
+    private fun refreshAppsIfLoaded() {
+        if (!loaded) return
+        appRefreshScope.launch {
+            refreshInstalledApps(force = true)
+        }
+    }
+
+    private fun loadLauncherApps(): List<LauncherApp> {
+        val intent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        return packageManager.queryIntentActivities(intent, 0)
+            .map { resolveInfo ->
+                val label = resolveInfo.loadLabel(packageManager).toString()
+                LauncherApp(
+                    packageName = resolveInfo.activityInfo.packageName,
+                    activityName = resolveInfo.activityInfo.name,
+                    label = label,
+                    searchLabel = label.lowercase()
+                )
+            }
+            .distinctBy { app -> app.packageName to app.activityName }
+            .sortedBy { app -> app.searchLabel }
+    }
+
+    private fun registerAppChangeListeners() {
+        launcherApps?.let { service ->
+            runCatching {
+                service.registerCallback(launcherAppsCallback, Handler(Looper.getMainLooper()))
+            }
+        }
+
+        val packageFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(
+                packageChangeReceiver,
+                packageFilter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appContext.registerReceiver(packageChangeReceiver, packageFilter)
+        }
     }
 
     fun peekIcon(app: LauncherApp, sizePx: Int): Bitmap? {
